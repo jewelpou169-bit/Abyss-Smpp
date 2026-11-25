@@ -226,21 +226,40 @@ function createBot() {
 
     bot.loadPlugin(pathfinder);
 
-    // ---------- AUTH (ONE place only, runs once per join) ----------
-    let authDone = false;
-    bot.on('messagestr', (msg) => {
-      if (authDone) return;
-      const m = msg.toLowerCase();
+    // ---------- AUTH ----------
+    const PASS = 'Perzuu';
+    let tries = 0;
+    let lastTry = 0;
 
-      if (m.includes('/register')) {
-        authDone = true;
-        bot.chat('/register Perzuu Perzuu');
-        console.log('[Auth] Register sent');
-      } else if (m.includes('/login')) {
-        authDone = true;
-        bot.chat('/login Perzuu');
-        console.log('[Auth] Login sent');
+    function tryAuth(cmd) {
+      const now = Date.now();
+      if (tries >= 6 || now - lastTry < 2500) return;
+      tries++;
+      lastTry = now;
+      bot.chat(cmd);
+      console.log('[Auth] Sent:', cmd.split(' ')[0]);
+    }
+
+    // Shows EVERY server message so we can see what AuthSmith says
+    bot.on('messagestr', (msg) => {
+      console.log('[Chat]', msg);
+      const m = msg.toLowerCase();
+      if (m.includes('success') || m.includes('logged in') || m.includes('welcome back')) {
+        tries = 99; // done, stop sending
+        return;
       }
+      if (m.includes('register') || m.includes('not registered') || m.includes('create an account')) {
+        tryAuth(`/register ${PASS} ${PASS}`);
+      } else if (m.includes('log in') || m.includes('login') || m.includes('password')) {
+        tryAuth(`/login ${PASS}`);
+      }
+    });
+
+    // Don't wait for a message: try right after joining
+    bot.once('login', () => {
+      console.log('[Bot] Joined, authenticating soon...');
+      setTimeout(() => tryAuth(`/login ${PASS}`), 2500);
+      setTimeout(() => tryAuth(`/register ${PASS} ${PASS}`), 6000);
     });
 
     const connectionTimeout = setTimeout(() => {
