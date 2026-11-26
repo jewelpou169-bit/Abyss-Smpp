@@ -66,6 +66,49 @@ function restart(reason, delay) {
   scheduleReconnect(delay);
 }
 
+// ---------- RAW PACKET HELPERS ----------
+function varint(n) {
+  const out = [];
+  do {
+    let b = n & 0x7f;
+    n >>>= 7;
+    if (n !== 0) b |= 0x80;
+    out.push(b);
+  } while (n !== 0);
+  return Buffer.from(out);
+}
+
+function toTag(v) {
+  if (Array.isArray(v) && v.every(x => typeof x === 'number')) return nbt.intArray(v);
+  if (typeof v === 'string') return nbt.string(v);
+  if (typeof v === 'number') return nbt.int(v);
+  if (typeof v === 'boolean') return nbt.byte(v ? 1 : 0);
+  return nbt.string(JSON.stringify(v));
+}
+
+// Builds the "custom_click_action" packet by hand so it matches what the server expects.
+function sendCustomClick(b, id, tags) {
+  const full = nbt.writeUncompressed(nbt.comp(tags), 'big');
+  const nameless = Buffer.concat([full.subarray(0, 1), full.subarray(3)]); // network NBT has no root name
+
+  // ask the library only for the packet number
+  const probe = b._client.serializer.createPacketBuffer({
+    name: 'custom_click_action',
+    params: { id: 'a:b', payload: nbt.comp({}) }
+  });
+  let pid = 0, shift = 0, i = 0;
+  for (;;) {
+    const byte = probe[i++];
+    pid |= (byte & 0x7f) << shift;
+    if (!(byte & 0x80)) break;
+    shift += 7;
+  }
+
+  const idBuf = Buffer.from(id, 'utf8');
+  const body = Buffer.concat([varint(idBuf.length), idBuf, Buffer.from([1]), nameless]);
+  b._client.writeRaw(Buffer.concat([varint(pid), body]));
+}
+
 // ---------- AUTHSMITH LOGIN FORM (dialog) ----------
 // AuthSmith shows a login form (dialog) instead of chat commands.
 // This reads the form and fills in the password.
@@ -96,8 +139,10 @@ function handleDialog(b, data, state) {
     try {
       if (/custom/.test(type) && act.id) {
         const tags = {};
+        // hidden values the server attached to the button (the callback id)
+        Object.keys(act.additions || {}).forEach(k => { tags[k] = toTag(act.additions[k]); });
         Object.keys(values).forEach(k => { tags[k] = nbt.string(values[k]); });
-        b._client.write('custom_click_action', { id: act.id, payload: nbt.comp(tags) });
+        sendCustomClick(b, act.id, tags);
         log(`[Dialog] Sent form answer (${Object.keys(values).length} field(s)) to ${act.id}`);
       } else if (/command/.test(type)) {
         let cmd = String(act.command || act.template || '');
