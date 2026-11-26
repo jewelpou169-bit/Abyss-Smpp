@@ -207,6 +207,11 @@ function start() {
   bot = b;
   lastPacket = Date.now();
 
+  // The server kicks this bot for "invalid player movement", so the bot must not walk/fall.
+  // Keep physics switched off (forced often, because mineflayer turns it on by itself).
+  b.physicsEnabled = false;
+  timers.push(setInterval(() => { if (bot === b) b.physicsEnabled = false; }, 50));
+
   // --- debug helpers: remember the last packets, so we can see why the server closes the connection ---
   const recent = [];
   const remember = (t) => { recent.push(t); if (recent.length > 14) recent.shift(); };
@@ -259,14 +264,12 @@ function start() {
     attempts = 0;
     log('[Bot] Spawned in the world!');
 
-    // keep the bot active so it is not kicked for idling
+    // keep the bot active (no walking): swing arm + change hotbar slot
+    let slot = 0;
     timers.push(setInterval(() => {
       if (bot !== b) return;
-      try {
-        b.look(Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.6, true);
-        b.setControlState('jump', true);
-        setTimeout(() => { try { b.setControlState('jump', false); } catch (e) {} }, 300);
-      } catch (e) {}
+      try { b.swingArm('right'); } catch (e) {}
+      try { slot = (slot + 1) % 9; b.setQuickBarSlot(slot); } catch (e) {}
     }, 20000));
 
     // if the form never logged us in, try the commands once
