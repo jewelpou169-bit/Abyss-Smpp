@@ -1,11 +1,12 @@
 {
   "name": "abyssbot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
+    "debug": "^4.3.7",
     "mineflayer": "latest",
     "prismarine-nbt": "^2.7.0"
   }
