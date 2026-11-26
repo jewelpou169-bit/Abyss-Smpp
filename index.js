@@ -217,7 +217,15 @@ function start() {
   const remember = (t) => { recent.push(t); if (recent.length > 14) recent.shift(); };
   let versionLogged = false;
   const origWrite = b._client.write.bind(b._client);
-  b._client.write = (name, params) => { remember('->' + name); return origWrite(name, params); };
+  const sent = [];
+  // Movement packets are the ones the server rejects ("invalid player movement"), so never send them.
+  const DROP = new Set(['position', 'position_look', 'look', 'flying', 'vehicle_move']);
+  b._client.write = (name, params) => {
+    if (DROP.has(name)) return;
+    sent.push(name);
+    if (sent.length > 14) sent.shift();
+    return origWrite(name, params);
+  };
 
   // No spawn within 90s -> try again
   timers.push(setTimeout(() => {
@@ -294,7 +302,8 @@ function start() {
   b.on('end', (reason) => {
     if (bot !== b) return;
     log('[Bot] Disconnected:', reason || 'unknown');
-    log('[Debug] Last packets:', recent.join(' '));
+    log('[Debug] Last received:', recent.join(' '));
+    log('[Debug] Last sent:', sent.join(' '));
     restart('connection closed', b.__kickDelay);
   });
 }
