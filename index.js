@@ -17,6 +17,7 @@ let timers = [];
 let attempts = 0;
 let reconnectTimer = null;
 let lastPacket = Date.now();
+let dialogTry = 0;
 let online = false;
 const startedAt = Date.now();
 
@@ -87,7 +88,7 @@ function toTag(v) {
 }
 
 // Builds the "custom_click_action" packet by hand so it matches what the server expects.
-function sendCustomClick(b, id, tags) {
+function sendCustomClick(b, id, tags, withBool) {
   const full = nbt.writeUncompressed(nbt.comp(tags), 'big');
   const nameless = Buffer.concat([full.subarray(0, 1), full.subarray(3)]); // network NBT has no root name
 
@@ -105,7 +106,10 @@ function sendCustomClick(b, id, tags) {
   }
 
   const idBuf = Buffer.from(id, 'utf8');
-  const body = Buffer.concat([varint(idBuf.length), idBuf, Buffer.from([1]), nameless]);
+  const parts = [varint(idBuf.length), idBuf];
+  if (withBool) parts.push(Buffer.from([1])); // some versions put a yes/no byte before the data
+  parts.push(nameless);
+  const body = Buffer.concat(parts);
   b._client.writeRaw(Buffer.concat([varint(pid), body]));
 }
 
@@ -142,7 +146,10 @@ function handleDialog(b, data, state) {
         // hidden values the server attached to the button (the callback id)
         Object.keys(act.additions || {}).forEach(k => { tags[k] = toTag(act.additions[k]); });
         Object.keys(values).forEach(k => { tags[k] = nbt.string(values[k]); });
-        sendCustomClick(b, act.id, tags);
+        dialogTry++;
+        const withBool = dialogTry % 2 === 0; // 1st try: no extra byte, 2nd try: with it, and so on
+        sendCustomClick(b, act.id, tags, withBool);
+        log(`[Dialog] Format used: ${withBool ? 'with' : 'without'} yes/no byte`);
         log(`[Dialog] Sent form answer (${Object.keys(values).length} field(s)) to ${act.id}`);
       } else if (/command/.test(type)) {
         let cmd = String(act.command || act.template || '');
