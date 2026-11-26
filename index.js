@@ -79,18 +79,36 @@ function varint(n) {
   return Buffer.from(out);
 }
 
-function toTag(v) {
-  if (Array.isArray(v) && v.every(x => typeof x === 'number')) return nbt.intArray(v);
-  if (typeof v === 'string') return nbt.string(v);
-  if (typeof v === 'number') return nbt.int(v);
-  if (typeof v === 'boolean') return nbt.byte(v ? 1 : 0);
-  return nbt.string(JSON.stringify(v));
+// Network NBT (no root name), written by hand. Supports strings and int arrays.
+function nbtName(str) {
+  const b = Buffer.from(str, 'utf8');
+  const len = Buffer.alloc(2);
+  len.writeUInt16BE(b.length);
+  return Buffer.concat([len, b]);
 }
 
-// Builds the "custom_click_action" packet by hand so it matches what the server expects.
+function buildPayload(tags) {
+  const parts = [Buffer.from([0x0a])]; // compound, no name
+  Object.keys(tags).forEach((k) => {
+    const v = tags[k];
+    if (Array.isArray(v) && v.every(x => typeof x === 'number')) {
+      const head = Buffer.alloc(4);
+      head.writeInt32BE(v.length);
+      const ints = Buffer.alloc(v.length * 4);
+      v.forEach((n, i) => ints.writeInt32BE(n | 0, i * 4));
+      parts.push(Buffer.from([0x0b]), nbtName(k), head, ints);
+    } else {
+      parts.push(Buffer.from([0x08]), nbtName(k), nbtName(String(v)));
+    }
+  });
+  parts.push(Buffer.from([0x00])); // end of compound
+  return Buffer.concat(parts);
+}
+
+// Builds the "custom_click_action" packet by hand: id + length-prefixed NBT payload.
 function sendCustomClick(b, id, tags, withBool) {
-  const full = nbt.writeUncompressed(nbt.comp(tags), 'big');
-  const nameless = Buffer.concat([full.subarray(0, 1), full.subarray(3)]); // network NBT has no root name
+  let inner = buildPayload(tags);
+  if (withBool) inner = Buffer.concat([Buffer.from([1]), inner]); // alternate format tried on retries
 
   // ask the library only for the packet number
   const probe = b._client.serializer.createPacketBuffer({
@@ -106,10 +124,7 @@ function sendCustomClick(b, id, tags, withBool) {
   }
 
   const idBuf = Buffer.from(id, 'utf8');
-  const parts = [varint(idBuf.length), idBuf];
-  if (withBool) parts.push(Buffer.from([1])); // some versions put a yes/no byte before the data
-  parts.push(nameless);
-  const body = Buffer.concat(parts);
+  const body = Buffer.concat([varint(idBuf.length), idBuf, varint(inner.length), inner]);
   b._client.writeRaw(Buffer.concat([varint(pid), body]));
 }
 
@@ -144,10 +159,10 @@ function handleDialog(b, data, state) {
       if (/custom/.test(type) && act.id) {
         const tags = {};
         // hidden values the server attached to the button (the callback id)
-        Object.keys(act.additions || {}).forEach(k => { tags[k] = toTag(act.additions[k]); });
-        Object.keys(values).forEach(k => { tags[k] = nbt.string(values[k]); });
+        Object.keys(act.additions || {}).forEach(k => { tags[k] = act.additions[k]; });
+        Object.keys(values).forEach(k => { tags[k] = values[k]; });
         dialogTry++;
-        const withBool = dialogTry % 2 === 0; // 1st try: no extra byte, 2nd try: with it, and so on
+        const withBool = dialogTry % 2 === 0; // 1st try: plain, 2nd try: with extra byte, and so on
         sendCustomClick(b, act.id, tags, withBool);
         log(`[Dialog] Format used: ${withBool ? 'with' : 'without'} yes/no byte`);
         log(`[Dialog] Sent form answer (${Object.keys(values).length} field(s)) to ${act.id}`);
