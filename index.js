@@ -161,10 +161,8 @@ function handleDialog(b, data, state) {
         // hidden values the server attached to the button (the callback id)
         Object.keys(act.additions || {}).forEach(k => { tags[k] = act.additions[k]; });
         Object.keys(values).forEach(k => { tags[k] = values[k]; });
-        dialogTry++;
-        const withBool = dialogTry % 2 === 0; // 1st try: plain, 2nd try: with extra byte, and so on
+        const withBool = false; // this format worked on your server
         sendCustomClick(b, act.id, tags, withBool);
-        log(`[Dialog] Format used: ${withBool ? 'with' : 'without'} yes/no byte`);
         log(`[Dialog] Sent form answer (${Object.keys(values).length} field(s)) to ${act.id}`);
       } else if (/command/.test(type)) {
         let cmd = String(act.command || act.template || '');
@@ -209,6 +207,13 @@ function start() {
   bot = b;
   lastPacket = Date.now();
 
+  // --- debug helpers: remember the last packets, so we can see why the server closes the connection ---
+  const recent = [];
+  const remember = (t) => { recent.push(t); if (recent.length > 14) recent.shift(); };
+  let versionLogged = false;
+  const origWrite = b._client.write.bind(b._client);
+  b._client.write = (name, params) => { remember('->' + name); return origWrite(name, params); };
+
   // No spawn within 90s -> try again
   timers.push(setTimeout(() => {
     if (bot === b && !online) restart('no spawn after 90s');
@@ -217,6 +222,8 @@ function start() {
   // Watch every packet (also finds the AuthSmith form)
   b._client.on('packet', (data, meta) => {
     lastPacket = Date.now();
+    if (meta) remember('<-' + meta.name);
+    if (!versionLogged && b.version) { versionLogged = true; log('[Bot] Using Minecraft version', b.version); }
     if (meta && /dialog/i.test(meta.name) && !/clear/i.test(meta.name)) {
       log(`[Dialog] Packet ${meta.state}/${meta.name}`);
       handleDialog(b, data, meta.state);
@@ -284,6 +291,7 @@ function start() {
   b.on('end', (reason) => {
     if (bot !== b) return;
     log('[Bot] Disconnected:', reason || 'unknown');
+    log('[Debug] Last packets:', recent.join(' '));
     restart('connection closed', b.__kickDelay);
   });
 }
